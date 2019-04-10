@@ -6,7 +6,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/xyproto/algernon/lua/convert"
 	"github.com/xyproto/gopher-lua"
-	"io/ioutil"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -43,7 +44,11 @@ func constructHTTPClient(L *lua.LState, userAgent string) (*lua.LUserData, error
 }
 
 // hcGet is a Lua function for running the GET method on a given URL.
-// It also takes a table with URL arguments (optional).
+// The first argument is the URL.
+// It can also take the following optional arguments:
+// * A table with URL arguments
+// * A table with HTTP headers
+// The response body is returned as a string.
 func hcGet(L *lua.LState) int {
 	hc := checkHTTPClientClass(L) // arg 1
 	URL := L.ToString(2)          // arg 2
@@ -52,14 +57,47 @@ func hcGet(L *lua.LState) int {
 		return 0 // no results
 	}
 
-	// Request headers
-	headers := make(map[string]string)
-	urlValues := L.ToTable(3)
-	if urlValues != nil {
-		headers, _, _, _ = convert.Table2maps(urlValues)
+	// URL VALUES
+	uv := make(url.Values)
+	argTable := L.ToTable(3) // arg 3 (optiona)
+	if argTable != nil {
+		argMap := convert.Table2interfaceMap(argTable)
+		for k, interfaceValue := range argMap {
+			switch v := interfaceValue.(type) {
+			case int:
+				uv.Add(k, strconv.Itoa(v))
+			case string:
+				uv.Add(k, v)
+			default:
+				log.Warn("Unrecognized value in table:", v)
+			}
+		}
+	}
+	encodedValues := uv.Encode()
+	if encodedValues != "" {
+		URL += "?" + encodedValues
 	}
 
-	// GET the given URL
+	// HTTP HEADERS
+	headers := make(map[string]string)
+	headerTable := L.ToTable(4) // arg 4 (optional)
+	if headerTable != nil {
+		headerMap := convert.Table2interfaceMap(headerTable)
+		for k, interfaceValue := range headerMap {
+			switch v := interfaceValue.(type) {
+			case int:
+				headers[k] = strconv.Itoa(v)
+			case string:
+				headers[k] = v
+			default:
+				log.Warn("Unrecognized value in table:", v)
+			}
+		}
+	}
+
+	log.Info("GET " + URL)
+
+	// GET the given URL with the given HTTP headers
 	resp, err := hc.Do("GET", URL, headers, nil)
 	if err != nil {
 		log.Error(err)
@@ -67,95 +105,24 @@ func hcGet(L *lua.LState) int {
 	}
 
 	// Read the returned body
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	bodyString, err := resp.ToString()
 	if err != nil {
 		log.Error(err)
 		return 0 // no results
 	}
 
 	// Return a string
-	L.Push(lua.LString(string(body)))
-	return 1 // number of results
-}
-
-// hcHead is a Lua function for running the HEAD method on a given URL.
-// It also takes a table with URL arguments (optional).
-func hcHead(L *lua.LState) int {
-	hc := checkHTTPClientClass(L) // arg 1
-	URL := L.ToString(2)          // arg 2
-	if URL == "" {
-		L.ArgError(2, "URL expected")
-		return 0 // no results
-	}
-
-	// Request headers
-	headers := make(map[string]string)
-	urlValues := L.ToTable(3)
-	if urlValues != nil {
-		headers, _, _, _ = convert.Table2maps(urlValues)
-	}
-
-	// HEAD the given URL
-	resp, err := hc.Do("HEAD", URL, headers, nil)
-	if err != nil {
-		log.Error(err)
-		return 0 // no results
-	}
-
-	// Read the returned body
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Error(err)
-		return 0 // no results
-	}
-
-	// Return a string
-	L.Push(lua.LString(string(body)))
-	return 1 // number of results
-}
-
-// hcDelete is a Lua function for running the DELETE method on a given URL.
-// It also takes a table with URL arguments (optional).
-func hcDelete(L *lua.LState) int {
-	hc := checkHTTPClientClass(L) // arg 1
-	URL := L.ToString(2)          // arg 2
-	if URL == "" {
-		L.ArgError(2, "URL expected")
-		return 0 // no results
-	}
-
-	// Request headers
-	headers := make(map[string]string)
-	urlValues := L.ToTable(3)
-	if urlValues != nil {
-		headers, _, _, _ = convert.Table2maps(urlValues)
-	}
-
-	// DELETE the given URL
-	resp, err := hc.Do("DELETE", URL, headers, nil)
-	if err != nil {
-		log.Error(err)
-		return 0 // no results
-	}
-
-	// Read the returned body
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Error(err)
-		return 0 // no results
-	}
-
-	// Return a string
-	L.Push(lua.LString(string(body)))
+	L.Push(lua.LString(bodyString))
 	return 1 // number of results
 }
 
 // hcPost is a Lua function for running the POST method on a given URL.
-// It also takes a table with URL arguments (optional).
-// It can also takes a string to post as the body (optional).
+// The first argument is the URL.
+// It can also take the following optional arguments:
+// * A table with URL arguments
+// * A table with HTTP headers
+// * A string that is the POST body
+// The response body is returned as a string.
 func hcPost(L *lua.LState) int {
 	hc := checkHTTPClientClass(L) // arg 1
 	URL := L.ToString(2)          // arg 2
@@ -164,33 +131,65 @@ func hcPost(L *lua.LState) int {
 		return 0 // no results
 	}
 
-	// Request headers
+	// URL VALUES
+	uv := make(url.Values)
+	argTable := L.ToTable(3) // arg 3 (optiona)
+	if argTable != nil {
+		argMap := convert.Table2interfaceMap(argTable)
+		for k, interfaceValue := range argMap {
+			switch v := interfaceValue.(type) {
+			case int:
+				uv.Add(k, strconv.Itoa(v))
+			case string:
+				uv.Add(k, v)
+			default:
+				log.Warn("Unrecognized value in table:", v)
+			}
+		}
+	}
+	encodedValues := uv.Encode()
+	if encodedValues != "" {
+		URL += "?" + encodedValues
+	}
+
+	// HTTP HEADERS
 	headers := make(map[string]string)
-	urlValues := L.ToTable(3) // arg 3 (optional)
-	if urlValues != nil {
-		headers, _, _, _ = convert.Table2maps(urlValues)
+	headerTable := L.ToTable(4) // arg 4 (optional)
+	if headerTable != nil {
+		headerMap := convert.Table2interfaceMap(headerTable)
+		for k, interfaceValue := range headerMap {
+			switch v := interfaceValue.(type) {
+			case int:
+				headers[k] = strconv.Itoa(v)
+			case string:
+				headers[k] = v
+			default:
+				log.Warn("Unrecognized value in table:", v)
+			}
+		}
 	}
 
 	// Body
-	body := L.ToString(4) // arg 4 (optional)
+	bodyReader := strings.NewReader(L.ToString(5)) // arg 5 (optional)
 
-	// POST the given URL
-	resp, err := hc.Do("POST", URL, headers, strings.NewReader(body))
+	log.Info("POST " + URL)
+
+	// POST the given URL with the given HTTP headers
+	resp, err := hc.Do("POST", URL, headers, bodyReader)
 	if err != nil {
 		log.Error(err)
 		return 0 // no results
 	}
 
 	// Read the returned body
-	defer resp.Body.Close()
-	respBody, err := ioutil.ReadAll(resp.Body)
+	bodyString, err := resp.ToString()
 	if err != nil {
 		log.Error(err)
 		return 0 // no results
 	}
 
 	// Return a string
-	L.Push(lua.LString(string(respBody)))
+	L.Push(lua.LString(bodyString))
 	return 1 // number of results
 }
 
@@ -220,13 +219,15 @@ func hcSetUserAgent(L *lua.LState) int {
 var hcMethods = map[string]lua.LGFunction{
 	"__tostring":   hcString,
 	"SetUserAgent": hcSetUserAgent,
-	"Get":          hcGet,
-	"Head":         hcHead,
-	"Delete":       hcDelete,
-	"Post":         hcPost,
+	//"SetLanguage":  hcSetLanguage,
+	"Get":  hcGet,
+	"Post": hcPost,
+	//"Put":         hcPut,
+	//"Delete":       hcDelete,
+
+	//"Head":         hcHead,
 	//"PutJSON":      hcPutJSON,
 	//"Options":      hcOptions,
-	//"SetLanguage":  hcSetLanguage,
 	//"SetHeader":    hcSetHeader,
 	//"SetOption":    hcSetOption,
 	//"SetCookie":    hcSetCookie,
