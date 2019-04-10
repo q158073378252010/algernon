@@ -69,6 +69,7 @@ func hcGet(L *lua.LState) int {
 			case string:
 				uv.Add(k, v)
 			default:
+				// TODO: Also support floats?
 				log.Warn("Unrecognized value in table:", v)
 			}
 		}
@@ -95,7 +96,7 @@ func hcGet(L *lua.LState) int {
 		}
 	}
 
-	log.Info("GET " + URL)
+	//log.Info("GET " + URL)
 
 	// GET the given URL with the given HTTP headers
 	resp, err := hc.Do("GET", URL, headers, nil)
@@ -143,6 +144,7 @@ func hcPost(L *lua.LState) int {
 			case string:
 				uv.Add(k, v)
 			default:
+				// TODO: Also support floats?
 				log.Warn("Unrecognized value in table:", v)
 			}
 		}
@@ -172,10 +174,87 @@ func hcPost(L *lua.LState) int {
 	// Body
 	bodyReader := strings.NewReader(L.ToString(5)) // arg 5 (optional)
 
-	log.Info("POST " + URL)
+	//log.Info("POST " + URL)
 
 	// POST the given URL with the given HTTP headers
 	resp, err := hc.Do("POST", URL, headers, bodyReader)
+	if err != nil {
+		log.Error(err)
+		return 0 // no results
+	}
+
+	// Read the returned body
+	bodyString, err := resp.ToString()
+	if err != nil {
+		log.Error(err)
+		return 0 // no results
+	}
+
+	// Return a string
+	L.Push(lua.LString(bodyString))
+	return 1 // number of results
+}
+
+// hcDo is a Lua function for running a custom HTTP method on a given URL.
+// The first argument is the method, like PUT or DELETE.
+// The second argument is the URL.
+// It can also take the following optional arguments:
+// * A table with URL arguments
+// * A table with HTTP headers
+// The response body is returned as a string.
+func hcDo(L *lua.LState) int {
+	hc := checkHTTPClientClass(L) // arg 1
+
+	method := L.ToString(2) // arg 2
+	URL := L.ToString(3)    // arg 3
+	if URL == "" {
+		L.ArgError(2, "URL expected")
+		return 0 // no results
+	}
+
+	// URL VALUES
+	uv := make(url.Values)
+	argTable := L.ToTable(4) // arg 4 (optiona)
+	if argTable != nil {
+		argMap := convert.Table2interfaceMap(argTable)
+		for k, interfaceValue := range argMap {
+			switch v := interfaceValue.(type) {
+			case int:
+				uv.Add(k, strconv.Itoa(v))
+			case string:
+				uv.Add(k, v)
+			default:
+				// TODO: Also support floats?
+				log.Warn("Unrecognized value in table:", v)
+			}
+		}
+	}
+	encodedValues := uv.Encode()
+	if encodedValues != "" {
+		URL += "?" + encodedValues
+	}
+
+	// HTTP HEADERS
+	headers := make(map[string]string)
+	headerTable := L.ToTable(5) // arg 5 (optional)
+	if headerTable != nil {
+		headerMap := convert.Table2interfaceMap(headerTable)
+		for k, interfaceValue := range headerMap {
+			switch v := interfaceValue.(type) {
+			case int:
+				headers[k] = strconv.Itoa(v)
+			case string:
+				headers[k] = v
+			default:
+				log.Warn("Unrecognized value in table:", v)
+			}
+		}
+	}
+
+	//log.Info(method + " " + URL)
+
+	// Connect to the given URL with the given method and the given HTTP headers
+	resp, err := hc.Do(method, URL, headers, nil)
 	if err != nil {
 		log.Error(err)
 		return 0 // no results
@@ -219,12 +298,15 @@ func hcSetUserAgent(L *lua.LState) int {
 var hcMethods = map[string]lua.LGFunction{
 	"__tostring":   hcString,
 	"SetUserAgent": hcSetUserAgent,
-	//"SetLanguage":  hcSetLanguage,
-	"Get":  hcGet,
-	"Post": hcPost,
-	//"Put":         hcPut,
-	//"Delete":       hcDelete,
+	"Get":          hcGet,
+	"Post":         hcPost,
+	"Do":           hcDo,
 
+	// TODO: Implement one or more of these functions,
+	//       see the httpclient documentation for inspiration.
+	//"SetLanguage":  hcSetLanguage,
+	//"Put":          hcPut,
+	//"Delete":       hcDelete,
 	//"Head":         hcHead,
 	//"PutJSON":      hcPutJSON,
 	//"Options":      hcOptions,
